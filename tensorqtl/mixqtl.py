@@ -154,6 +154,33 @@ def linreg(X_t, y_t):
     b_se_t = torch.sqrt(rss_t/dof * torch.diag(X2inv_t))
     return b_t, b_se_t
 
+def linreg_robust(X_t, y_t):
+    """
+    Solve y = Xb with pre-scaling on columns 
+    to avoid huge condition number on XtX
+    """
+    x_std = X_t.std(axis = 0)
+    x_mean = X_t.mean(axis = 0)
+    x_std[0] = 1
+    x_mean[0] = 0
+    Xtilde = torch.matmul(X_t - x_mean, torch.diag(1 / x_std))
+    XtX = torch.matmul(Xtilde.T, Xtilde)
+    Xty = torch.matmul(Xtilde.T, y_t)
+    b_t, _ = torch.solve(Xty.unsqueeze_(dim = 1), XtX)
+    b_t = b_t[:, 0]
+    sigma_sq_hat = torch.pow(y_t - torch.matmul(Xtilde, b_t), 2).sum() / (Xtilde.shape[0] - Xtilde.shape[1])
+    XtX_inv, _ = torch.solve(torch.diag(torch.ones(Xtilde.shape[1])), XtX)
+    var_b = sigma_sq_hat * XtX_inv
+    b_se_t = torch.sqrt(torch.diag(var_b))
+    b_t = b_t / x_std
+    b_t[0] = b_t[0] - torch.sum(x_mean * b_t)
+    muSigma = x_mean / x_std
+    muSigma[0] = 0
+    b_se_t = b_se_t / x_std
+    b_se_t[0] = torch.sqrt(b_se_t[0] ** 2 + torch.matmul(torch.matmul(muSigma.T, var_b), muSigma))
+    
+    return b_t, b_se_t
+
 # def linreg_solve(X_t, y_t):
 #     """Solve y = Xb using torch.solve"""
 #     XtX = torch.matmul(X_t.t(), X_t)
@@ -170,7 +197,7 @@ def linreg(X_t, y_t):
 
 ## added by Yanyu Liang
 def regress_out(cov, y):
-    b_t, b_se_t = linreg(cov, y)
+    b_t, b_se_t = linreg_robust(cov, y)
     y_ = y - torch.einsum('ij,j->i', cov, b_t)
     return y_
 def _inner(A, B, M):
@@ -268,13 +295,13 @@ def trc_calc(genotypes_t, log_counts_t, raw_counts_t, covariates0_t,
     mask_cov = raw_counts_t != 0
     
     if select_covariates:
-        b_t, b_se_t = linreg(covariates0_t[mask_cov, :], log_counts_t[mask_cov])
+        b_t, b_se_t = linreg_robust(covariates0_t[mask_cov, :], log_counts_t[mask_cov])
         tstat_t = b_t / b_se_t
         m = tstat_t.abs() > 2
         m[0] = True
         covariates_t = covariates0_t[:, m]
     else:
-        covariates_t = covariates0_t[:, 1:]
+        covariates_t = covariates0_t
 
     M = torch.unsqueeze(mask_t, 1).float()
     M_cov = torch.unsqueeze(mask_cov, 1).float()
@@ -491,7 +518,6 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
 
             res_asc, samples_asc, dof_asc = asc_calc(hap1_t, hap2_t, ref_t, alt_t)
             # res = [tstat_t, beta_t, beta_se_t]
-            break
 
             n = len(variant_ids)
             [tstat_trc, beta_trc, beta_se_trc, maf_trc, ma_samples_trc, ma_count_trc] = res_trc
