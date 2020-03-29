@@ -13,6 +13,7 @@ from post import *
 import genotypeio
 import cis
 import trans
+import mixqtl
 
 
 def main():
