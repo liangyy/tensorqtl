@@ -169,7 +169,10 @@ def linreg_robust(X_t, y_t):
     b_t, _ = torch.solve(Xty.unsqueeze_(dim = 1), XtX)
     b_t = b_t[:, 0]
     sigma_sq_hat = torch.pow(y_t - torch.matmul(Xtilde, b_t), 2).sum() / (Xtilde.shape[0] - Xtilde.shape[1])
-    XtX_inv, _ = torch.solve(torch.diag(torch.ones(Xtilde.shape[1])), XtX)
+    if not torch.cuda.is_available():
+        XtX_inv, _ = torch.solve(torch.diag(torch.ones(Xtilde.shape[1])), XtX)
+    else:
+        XtX_inv, _ = torch.solve(torch.diag(torch.cuda.FloatTensor(Xtilde.shape[1]).fill_(1)), XtX)
     var_b = sigma_sq_hat * XtX_inv
     b_se_t = torch.sqrt(torch.diag(var_b))
     b_t = b_t / x_std
@@ -207,7 +210,10 @@ def algo1_matrixLS(Y, X, M, numpy = True):
     # Y = torch.Tensor(Y)
     # X = torch.Tensor(X)
     # M = torch.Tensor(M)
-    U = torch.ones(X.shape)
+    if not torch.cuda.is_available():
+        U = torch.ones(X.shape)
+    else:
+        U = torch.cuda.FloatTensor(X.shape).fill_(1)
     n = torch.einsum('ij->j', M)
     Y = torch.mul(Y, M)
     T1 = torch.einsum('ij,ik->jk', X, Y)
@@ -532,15 +538,15 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
             chr_res['beta_se_trc'][start:start+n] = beta_se_trc.cpu().numpy()
             chr_res['tstat_trc'][start:start+n] = tstat_trc.cpu().numpy()
             chr_res['samples_trc'][start:start+n] = samples_trc
-            chr_res['dof_trc'][start:start+n] = dof_trc
+            chr_res['dof_trc'][start:start+n] = dof_trc.cpu().numpy()
 
             if res_asc is not None:
                 [tstat_asc, beta_asc, beta_se_asc] = res_asc
                 chr_res['beta_asc'][start:start+n] = beta_asc.cpu().numpy()
                 chr_res['beta_se_asc'][start:start+n] = beta_se_asc.cpu().numpy()
                 chr_res['tstat_asc'][start:start+n] = tstat_asc.cpu().numpy()
-                chr_res['samples_asc'][start:start+n] = samples_asc
-                chr_res['dof_asc'][start:start+n] = dof_asc
+                chr_res['samples_asc'][start:start+n] = samples_asc.cpu().numpy()
+                chr_res['dof_asc'][start:start+n] = dof_asc.cpu().numpy()
                 # meta-analysis
                 d = 1/beta_se_trc**2 + 1/beta_se_asc**2
                 beta_meta_t = (beta_asc/beta_se_asc**2 + beta_trc/beta_se_trc**2) / d
