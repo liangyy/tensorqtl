@@ -430,7 +430,8 @@ def asc_calc(hap1_t, hap2_t, ref_t, alt_t, ase_threshold=50, ase_max=1000, weigh
 
 def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_df, alt_df,
                 phenotype_pos_df, covariates_df, prefix,
-                window=1000000, output_dir='.', write_stats=True, logger=None, verbose=True):
+                window=1000000, output_dir='.', write_stats=True, logger=None, verbose=True,
+                count_threshold=100, ase_threshold=50, ase_max=1000, weight_cap=100):
     """
     cis-QTL mapping: mixQTL model, nominal associations for all variant-phenotype pairs
 
@@ -519,10 +520,10 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
             tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igm.phenotype_tss[phenotype_id])
             
             res_trc, samples_trc, dof_trc = trc_calc(genotypes_t, log_counts_t, raw_counts_t,
-                                                     covariates0_t, count_threshold=100, select_covariates=True)
+                                                     covariates0_t, count_threshold=count_threshold, select_covariates=True)
             # res = [tstat, beta, beta_se, maf, ma_samples, ma_count]
 
-            res_asc, samples_asc, dof_asc = asc_calc(hap1_t, hap2_t, ref_t, alt_t)
+            res_asc, samples_asc, dof_asc = asc_calc(hap1_t, hap2_t, ref_t, alt_t, ase_threshold=ase_threshold, ase_max=ase_max, weight_cap=weight_cap)
             # res = [tstat_t, beta_t, beta_se_t]
 
             n = len(variant_ids)
