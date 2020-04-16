@@ -494,6 +494,7 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
         chr_res['beta_se_meta'] =   np.empty(n, dtype=np.float32)
         chr_res['tstat_meta'] =     np.empty(n, dtype=np.float32)
         chr_res['pval_meta'] =      np.empty(n, dtype=np.float64)
+        chr_res['method_meta'] = []  # to record which method is used to get the meta analysis result
 
         start = 0
         for k, (raw_counts, log_counts, ref, alt, hap1, hap2, genotype_range, phenotype_id) in enumerate(igm.generate_data(chrom=chrom, verbose=verbose), k+1):
@@ -548,7 +549,9 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
                 chr_res['tstat_asc'][start:start+n] = tstat_asc.cpu().numpy()
                 chr_res['samples_asc'][start:start+n] = samples_asc.cpu().numpy()
                 chr_res['dof_asc'][start:start+n] = dof_asc.cpu().numpy()
-                # meta-analysis
+            # meta-analysis
+            if res_asc is not None and samples_asc >= 15 and samples_trc >= 15:
+                chr_res['method_meta'].extend(['meta']*n)
                 d = 1/beta_se_trc**2 + 1/beta_se_asc**2
                 beta_meta_t = (beta_asc/beta_se_asc**2 + beta_trc/beta_se_trc**2) / d
                 beta_se_meta_t = 1 / torch.sqrt(d)
@@ -556,6 +559,11 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
                 chr_res['beta_meta'][start:start+n] = beta_meta_t.cpu().numpy()
                 chr_res['beta_se_meta'][start:start+n] = beta_se_meta_t.cpu().numpy()
                 chr_res['tstat_meta'][start:start+n] = tstat_meta_t.cpu().numpy()
+            else:
+                chr_res['method_meta'].extend(['trc']*n)
+                chr_res['beta_meta'][start:start+n] = beta_trc.cpu().numpy()
+                chr_res['beta_se_meta'][start:start+n] = beta_se_trc.cpu().numpy()
+                chr_res['tstat_meta'][start:start+n] = tstat_trc.cpu().numpy()
 
             start += n  # update pointer
 
@@ -574,6 +582,8 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
             chr_res_df['pval_trc'] = 2*stats.t.cdf(-chr_res_df['tstat_trc'].abs(), chr_res_df['dof_trc'])
             chr_res_df['pval_asc'] = 2*stats.t.cdf(-chr_res_df['tstat_asc'].abs(), chr_res_df['dof_asc'])
             chr_res_df['pval_meta'] = 2*stats.norm.cdf(-chr_res_df['tstat_meta'].abs())
+            chr_res_df['pval_meta'][chr_res_df['method_meta'] == 'trc'] = chr_res_df['pval_trc'][chr_res_df['method_meta'] == 'trc'] 
+ 
 
             print('    * writing output')
             chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.mixQTL.{}.parquet'.format(prefix, chrom)))
