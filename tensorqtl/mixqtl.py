@@ -449,7 +449,7 @@ def impute_hap(haplotype1_t, haplotype2_t):
     m2 = haplotype2_t == -1
     tensorqtl.impute_mean(haplotype1_t)
     tensorqtl.impute_mean(haplotype2_t)
-    ix = np.logical_or(m1.nonzero(), m2.nonzero())
+    ix = m1 | m2
     haplotype1_t[ix] = (haplotype1_t[ix] + haplotype2_t[ix]) / 2
     haplotype2_t[ix] = haplotype1_t[ix]
 
@@ -539,6 +539,8 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
             genotypes_t = hap1_t + hap2_t
             genotypes_t[genotypes_t==-2] = -1
             tensorqtl.impute_mean(genotypes_t)
+            # tensorqtl.impute_mean(hap1_t)
+            # tensorqtl.impute_mean(hap2_t)
             impute_hap(hap1_t, hap2_t)
 
             variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
