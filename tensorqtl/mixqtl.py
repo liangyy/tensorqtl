@@ -428,6 +428,22 @@ def asc_calc(hap1_t, hap2_t, ref_t, alt_t, ase_threshold=50, ase_max=1000, weigh
 #         return None, 0, np.NaN
 ## END
 
+def get_maf(genotypes_t):
+    m = genotypes_t == -1
+    a = genotypes_t.sum(1)
+    b = m.sum(1).float()
+    mu = (a + b) / (genotypes_t.shape[1] - b)
+    return mu
+
+def impute_to_maf(genotypes_t, maf):
+    """Impute missing genotypes to maf"""
+    m = genotypes_t == -1
+    # a = genotypes_t.sum(1)
+    # b = m.sum(1).float()
+    # mu = (a + b) / (genotypes_t.shape[1] - b)
+    ix = m.nonzero()
+    genotypes_t[m] = maf[ix[:,0]]
+
 def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_df, alt_df,
                 phenotype_pos_df, covariates_df, prefix,
                 window=1000000, output_dir='.', write_stats=True, logger=None, verbose=True,
@@ -513,9 +529,13 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
 
             genotypes_t = hap1_t + hap2_t
             genotypes_t[genotypes_t==-2] = -1
-            tensorqtl.impute_mean(genotypes_t)
-            tensorqtl.impute_mean(hap1_t)
-            tensorqtl.impute_mean(hap2_t)
+            # tensorqtl.impute_mean(genotypes_t)
+            # tensorqtl.impute_mean(hap1_t)
+            # tensorqtl.impute_mean(hap2_t)
+            maf_t = get_maf(genotypes_t)
+            impute_to_maf(genotypes_t, maf_t)
+            impute_to_maf(hap1_t, maf_t / 2)
+            impute_to_maf(hap2_t, maf_t / 2)
 
             variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
             tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igm.phenotype_tss[phenotype_id])
