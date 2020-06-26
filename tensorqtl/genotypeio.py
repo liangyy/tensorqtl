@@ -357,16 +357,20 @@ class InputGeneratorCis(object):
             self.phenotype_pos_df = self.phenotype_pos_df.loc[~m]
         self.group_s = None
         self.window = window
-
+        
         self.n_phenotypes = phenotype_df.shape[0]
         if 'tss' in phenotype_pos_df.columns:
-            self.phenotype_start = phenotype_pos_df['tss'].to_dict()
-            self.phenotype_end = phenotype_pos_df['tss'].to_dict()
-        elif 'start' in phenotype_pos_df.columns and 'end' in phenotype_pos_df.columns:
-            self.phenotype_start = phenotype_pos_df['start'].to_dict()
-            self.phenotype_end = phenotype_pos_df['end'].to_dict()
+            self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
+            if 'start' not in phenotype_pos_df.columns:
+                self.phenotype_start = phenotype_pos_df['tss'].to_dict()
+                self.phenotype_end = phenotype_pos_df['tss'].to_dict()
+            elif 'start' in phenotype_pos_df.columns and 'end' in phenotype_pos_df.columns:
+                self.phenotype_start = phenotype_pos_df['start'].to_dict()
+                self.phenotype_end = phenotype_pos_df['end'].to_dict()
+            else:
+                raise ValueError('phenotype_pos_df does not have desired columns: start and end.')
         else:
-            raise ValueError('phenotype_pos_df does not have desired columns: tss or start and end.')
+            raise ValueError('phenotype_pos_df should at least have column: tss.')
         self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
         self.chrs = phenotype_pos_df['chr'].unique()
         self.chr_variant_dfs = {c:g[['pos', 'index']] for c,g in self.variant_df.groupby('chrom')}
@@ -380,8 +384,8 @@ class InputGeneratorCis(object):
                 print('\r  * checking phenotypes: {}/{}'.format(k, phenotype_df.shape[0]), end='')
 
             # tss = self.phenotype_tss[phenotype_id]
-            start = self.phenotype_start][phenotype_id]
-            end = self.phenotype_end][phenotype_id]
+            start = self.phenotype_start[phenotype_id]
+            end = self.phenotype_end[phenotype_id]
             chrom = self.phenotype_chr[phenotype_id]
             # r = self.chr_variant_dfs[chrom]['index'].values[
             #     (self.chr_variant_dfs[chrom]['pos'].values >= tss - self.window) &
@@ -408,13 +412,17 @@ class InputGeneratorCis(object):
             self.n_phenotypes = self.phenotype_df.shape[0]
             self.phenotype_pos_df = self.phenotype_pos_df.loc[valid_ix]
             if 'tss' in phenotype_pos_df.columns:
-                self.phenotype_start = phenotype_pos_df['tss'].to_dict()
-                self.phenotype_end = phenotype_pos_df['tss'].to_dict()
-            elif 'start' in phenotype_pos_df.columns and 'end' in phenotype_pos_df.columns:
-                self.phenotype_start = phenotype_pos_df['start'].to_dict()
-                self.phenotype_end = phenotype_pos_df['end'].to_dict()
+                self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
+                if 'start' not in phenotype_pos_df.columns:
+                    self.phenotype_start = phenotype_pos_df['tss'].to_dict()
+                    self.phenotype_end = phenotype_pos_df['tss'].to_dict()
+                elif 'start' in phenotype_pos_df.columns and 'end' in phenotype_pos_df.columns:
+                    self.phenotype_start = phenotype_pos_df['start'].to_dict()
+                    self.phenotype_end = phenotype_pos_df['end'].to_dict()
+                else:
+                    raise ValueError('phenotype_pos_df does not have desired columns: start and end.')
             else:
-                raise ValueError('phenotype_pos_df does not have desired columns: tss or start and end.')
+                raise ValueError('phenotype_pos_df should at least have column: tss.')
             self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
         if group_s is not None:
             self.group_s = group_s.loc[self.phenotype_df.index].copy()
