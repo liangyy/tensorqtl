@@ -335,8 +335,8 @@ class InputGeneratorCis(object):
       genotype_df:      genotype DataFrame (genotypes x samples)
       variant_df:       DataFrame mapping variant_id (index) to chrom, pos
       phenotype_df:     phenotype DataFrame (phenotypes x samples)
-      phenotype_pos_df: DataFrame defining position of each phenotype, with columns 'chr' and 'tss'
-      window:           cis-window (selects variants within +- cis-window from TSS)
+      phenotype_pos_df: DataFrame defining position of each phenotype, with columns 'chr' and 'tss' (or 'chr', 'start', and 'end' if you want to use the whole gene body +- cis-window)
+      window:           cis-window (selects variants within +- cis-window from TSS or START - cis-window to END + cis-window)
 
     Generates: phenotype array, genotype array (2D), cis-window indices, phenotype ID
     """
@@ -359,7 +359,14 @@ class InputGeneratorCis(object):
         self.window = window
 
         self.n_phenotypes = phenotype_df.shape[0]
-        self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
+        if 'tss' in phenotype_pos_df.columns:
+            self.phenotype_start = phenotype_pos_df['tss'].to_dict()
+            self.phenotype_end = phenotype_pos_df['tss'].to_dict()
+        elif 'start' in phenotype_pos_df.columns and 'end' in phenotype_pos_df.columns:
+            self.phenotype_start = phenotype_pos_df['start'].to_dict()
+            self.phenotype_end = phenotype_pos_df['end'].to_dict()
+        else:
+            raise ValueError('phenotype_pos_df does not have desired columns: tss or start and end.')
         self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
         self.chrs = phenotype_pos_df['chr'].unique()
         self.chr_variant_dfs = {c:g[['pos', 'index']] for c,g in self.variant_df.groupby('chrom')}
@@ -372,7 +379,9 @@ class InputGeneratorCis(object):
             if np.mod(k, 1000) == 0:
                 print('\r  * checking phenotypes: {}/{}'.format(k, phenotype_df.shape[0]), end='')
 
-            tss = self.phenotype_tss[phenotype_id]
+            # tss = self.phenotype_tss[phenotype_id]
+            start = self.phenotype_start][phenotype_id]
+            end = self.phenotype_end][phenotype_id]
             chrom = self.phenotype_chr[phenotype_id]
             # r = self.chr_variant_dfs[chrom]['index'].values[
             #     (self.chr_variant_dfs[chrom]['pos'].values >= tss - self.window) &
@@ -381,8 +390,8 @@ class InputGeneratorCis(object):
             # r = [r[0],r[-1]]
 
             m = len(self.chr_variant_dfs[chrom]['pos'].values)
-            lb = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, tss - self.window)
-            ub = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, tss + self.window, side='right')
+            lb = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, start - self.window)
+            ub = np.searchsorted(self.chr_variant_dfs[chrom]['pos'].values, end + self.window, side='right')
             if lb != ub:
                 r = self.chr_variant_dfs[chrom]['index'].values[[lb, ub - 1]]
             else:
@@ -398,7 +407,14 @@ class InputGeneratorCis(object):
             self.phenotype_df = self.phenotype_df.loc[valid_ix]
             self.n_phenotypes = self.phenotype_df.shape[0]
             self.phenotype_pos_df = self.phenotype_pos_df.loc[valid_ix]
-            self.phenotype_tss = phenotype_pos_df['tss'].to_dict()
+            if 'tss' in phenotype_pos_df.columns:
+                self.phenotype_start = phenotype_pos_df['tss'].to_dict()
+                self.phenotype_end = phenotype_pos_df['tss'].to_dict()
+            elif 'start' in phenotype_pos_df.columns and 'end' in phenotype_pos_df.columns:
+                self.phenotype_start = phenotype_pos_df['start'].to_dict()
+                self.phenotype_end = phenotype_pos_df['end'].to_dict()
+            else:
+                raise ValueError('phenotype_pos_df does not have desired columns: tss or start and end.')
             self.phenotype_chr = phenotype_pos_df['chr'].to_dict()
         if group_s is not None:
             self.group_s = group_s.loc[self.phenotype_df.index].copy()
