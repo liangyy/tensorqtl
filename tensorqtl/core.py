@@ -92,11 +92,12 @@ def filter_maf_interaction(genotypes_t, interaction_mask_t=None, maf_threshold_i
 def impute_mean(genotypes_t):
     """Impute missing genotypes to mean"""
     m = genotypes_t == -1
-    a = genotypes_t.sum(1)
-    b = m.sum(1).float()
-    mu = (a + b) / (genotypes_t.shape[1] - b)
     ix = m.nonzero()
-    genotypes_t[m] = mu[ix[:,0]]
+    if len(ix) > 0:
+        a = genotypes_t.sum(1)
+        b = m.sum(1).float()
+        mu = (a + b) / (genotypes_t.shape[1] - b)
+        genotypes_t[m] = mu[ix[:,0]]
 
 
 def center_normalize(M_t, dim=0):
@@ -105,28 +106,33 @@ def center_normalize(M_t, dim=0):
     return N_t / torch.sqrt(torch.pow(N_t, 2).sum(dim=dim, keepdim=True))
 
 
-def calculate_corr(genotype_t, phenotype_t, residualizer, return_sd=False):
+def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_var=False):
     """Calculate correlation between normalized residual genotypes and phenotypes"""
-    # residualize
-    genotype_res_t = residualizer.transform(genotype_t)  # variants x samples
-    phenotype_res_t = residualizer.transform(phenotype_t)  # phenotypes x samples
 
-    if return_sd:
-        gstd = genotype_res_t.var(1)
-        pstd = phenotype_res_t.var(1)
+    # residualize
+    if residualizer is not None:
+        genotype_res_t = residualizer.transform(genotype_t)  # variants x samples
+        phenotype_res_t = residualizer.transform(phenotype_t)  # phenotypes x samples
+    else:
+        genotype_res_t = genotype_t
+        phenotype_res_t = phenotype_t
+
+    if return_var:
+        genotype_var_t = genotype_res_t.var(1)
+        phenotype_var_t = phenotype_res_t.var(1)
 
     # center and normalize
     genotype_res_t = center_normalize(genotype_res_t, dim=1)
     phenotype_res_t = center_normalize(phenotype_res_t, dim=1)
 
     # correlation
-    if return_sd:
-        return torch.mm(genotype_res_t, phenotype_res_t.t()), torch.sqrt(pstd.reshape(1,-1) / gstd.reshape(-1,1))
+    if return_var:
+        return torch.mm(genotype_res_t, phenotype_res_t.t()), genotype_var_t, phenotype_var_t
     else:
         return torch.mm(genotype_res_t, phenotype_res_t.t())
 
 
-def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer,
+def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, residualizer=None,
                                   return_sparse=False, tstat_threshold=None):
     """
     genotypes_t:   [num_genotypes x num_samples]
@@ -144,10 +150,11 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
     p0_t = phenotypes_t - phenotypes_t.mean(1, keepdim=True)
 
     # residualize rows
-    g0_t = residualizer.transform(g0_t, center=False)
-    gi0_t = residualizer.transform(gi0_t, center=False)
-    p0_t = residualizer.transform(p0_t, center=False)
-    i0_t = residualizer.transform(i0_t, center=False)
+    if residualizer is not None:
+        g0_t = residualizer.transform(g0_t, center=False)
+        gi0_t = residualizer.transform(gi0_t, center=False)
+        p0_t = residualizer.transform(p0_t, center=False)
+        i0_t = residualizer.transform(i0_t, center=False)
     i0_t = i0_t.repeat(ng, 1)
 
     # regression (in float; loss of precision may occur in edge cases)
@@ -160,7 +167,10 @@ def calculate_interaction_nominal(genotypes_t, phenotypes_t, interaction_t, resi
     # calculate b, b_se
     # [(ng x 3 x 3) x (ng x 3 x ns)] x (ng x ns x np) = (ng x 3 x np)
     b_t = torch.matmul(torch.matmul(Xinv, torch.transpose(X_t, 1, 2)), torch.transpose(p0_tile_t, 1, 2))
-    dof = residualizer.dof - 2
+    if residualizer is not None:
+        dof = residualizer.dof - 2
+    else:
+        dof = phenotypes_t.shape[1] - 4
     if nps==1:
         r_t = torch.matmul(X_t, b_t).squeeze() - p0_t
         rss_t = (r_t*r_t).sum(1)
@@ -275,9 +285,10 @@ def read_phenotype_bed(phenotype_bed):
         phenotype_df = pd.read_csv(phenotype_bed, sep='\t', index_col=3, dtype={'#chr':str, '#Chr':str})
     elif phenotype_bed.endswith('.parquet'):
         phenotype_df = pd.read_parquet(phenotype_bed)
+        phenotype_df.set_index(phenotype_df.columns[3], inplace=True)
     else:
         raise ValueError('Unsupported file type.')
-    phenotype_df.rename(columns={i:i.lower() for i in phenotype_df.columns[:3]}, inplace=True)
-    phenotype_pos_df = phenotype_df[['#chr', 'end']].rename(columns={'#chr':'chr', 'end':'tss'})
-    phenotype_df.drop(['#chr', 'start', 'end'], axis=1, inplace=True)
+    phenotype_df.rename(columns={i:i.lower().replace('#chr','chr') for i in phenotype_df.columns[:3]}, inplace=True)
+    phenotype_pos_df = phenotype_df[['chr', 'end']].rename(columns={'end':'tss'})
+    phenotype_df.drop(['chr', 'start', 'end'], axis=1, inplace=True)
     return phenotype_df, phenotype_pos_df
