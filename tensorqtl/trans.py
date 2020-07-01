@@ -79,7 +79,9 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
 
     # calculate correlation threshold for sparse output
-    dof = n_samples - 2 - covariates_df.shape[1]
+    # dof = n_samples - 2 - covariates_df.shape[1]
+    dof = residualizer.dof
+    logger.write('  * dof = {}'.format(dof))
     if return_sparse:
         tstat_threshold = -stats.t.ppf(pval_threshold/2, dof)
         r_threshold = tstat_threshold / np.sqrt(dof + tstat_threshold**2)
@@ -153,7 +155,7 @@ def map_trans(genotype_df, phenotype_df, covariates_df, interaction_s=None,
         return pval_df
 
     else:  # interaction model
-        dof = n_samples - 4 - covariates_df.shape[1]
+        # dof = n_samples - 4 - covariates_df.shape[1]  # memo: not used anyway
         interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
         interaction_mask_t = torch.BoolTensor(interaction_s >= interaction_s.median()).to(device)
 
@@ -298,7 +300,7 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
 
     n_variants = len(variant_ids)
     n_samples = len(sample_ids)
-    dof = n_samples - 2 - covariates_df.shape[1]
+    # dof = n_samples - 2 - covariates_df.shape[1]
 
     logger.write('trans-QTL mapping (permutations)')
     logger.write('  * {} samples'.format(n_samples))
@@ -320,6 +322,8 @@ def map_permutations(genotype_df, covariates_df, permutations=None,
     permutations_t = torch.tensor(permutations, dtype=torch.float32).to(device)
     covariates_t = torch.tensor(covariates_df.values, dtype=torch.float32).to(device)
     residualizer = Residualizer(covariates_t)
+    dof = residualizer.dof  # memo: dof = N - 2 - colrank(covariates_df)
+    logger.write('  * dof = {}'.format(dof))
     del covariates_t
 
     if chr_s is not None:

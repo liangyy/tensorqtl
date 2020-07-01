@@ -50,7 +50,6 @@ class Residualizer(object):
     def __init__(self, C_t):
         # center and orthogonalize
         self.Q_t, R_ = torch.qr(C_t - C_t.mean(0))
-        
         # here we take care of C_t with non full column rank
         # we follow the same behavior of R::lm where the correlated covariates 
         # will be discards (won't contribute to computation and dof)
@@ -58,9 +57,36 @@ class Residualizer(object):
         # specifically, we set Q columns with no contribution to zeros
         # and they won't be considered in dof calculation
         # get a binary vector indicating if Q_t columns are used.
-        Q_t_usage = (R_ != 0).sum(axis=1) != 0  
-        self.Q_t[:, torch.logical_not(Q_t_usage)] = 0
+        Q_t_usage = (R_ != 0).sum(axis=0) != 0  
+        self.Q_t[:, torch.logical_not(Q_t_usage) ] = 0
         self.dof = C_t.shape[0] - 2 - Q_t_usage.sum()
+
+    def __init__fixme(self, C_t):
+        '''
+        for numerical stability, use singular values to determine the column rank.
+        discard left singular vectors with
+                 singular value < ratio_cutoff * max singular value
+        '''
+        # center and orthogonalize
+        C0 = C_t - C_t.mean(0)
+        mat_rank = torch.matrix_rank(C0)
+        print(mat_rank)
+        ss, vv, dd = torch.svd(C0)
+        # self.Q_t, R_ = torch.qr(C_t - C_t.mean(0))
+        # here we take care of C_t with non full column rank
+        # we follow the same behavior of R::lm where the correlated covariates
+        # will be discards (won't contribute to computation and dof)
+        # here we check and take care of this situation
+        # specifically, we set Q columns with no contribution to zeros
+        # and they won't be considered in dof calculation
+        # get a binary vector indicating if Q_t columns are used.
+        # Q_t_usage = (R_ != 0).sum(axis=0) != 0
+        self.Q_t = ss
+        # Q_t_usage =  (vv.abs() / vv.max()) >= ratio_cutoff
+        self.Q_t[:, mat_rank:] = 0
+        self.Q_t = self.Q_t.to(torch.float32)
+        # self.Q_t[:, torch.logical_not(Q_t_usage)] = 0
+        self.dof = C_t.shape[0] - 2 - mat_rank
 
     def transform(self, M_t, center=True):
         """Residualize rows of M wrt columns of C"""
