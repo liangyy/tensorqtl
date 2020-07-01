@@ -12,6 +12,8 @@ import genotypeio, eigenmt
 from core import *
 
 
+import pdb
+
 def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None):
     """
     Calculate nominal associations
@@ -21,6 +23,7 @@ def calculate_cis_nominal(genotypes_t, phenotype_t, residualizer=None):
     covariates_t: covariates matrix, samples x covariates
     """
     p = phenotype_t.reshape(1,-1)
+ 
     r_nominal_t, genotype_var_t, phenotype_var_t = calculate_corr(genotypes_t, p, residualizer=residualizer, return_var=True)
     std_ratio_t = torch.sqrt(phenotype_var_t.reshape(1,-1) / genotype_var_t.reshape(-1,1))
     r_nominal_t = r_nominal_t.squeeze()
@@ -113,14 +116,19 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
     if interaction_s is None:
-        dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
+        # dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
+        # memo: dof = N - 2 - colrank(covariates_df)
+        dof = residualizer.dof
     else:
-        dof = phenotype_df.shape[1] - 4 - covariates_df.shape[1]
+        # dof = phenotype_df.shape[1] - 4 - covariates_df.shape[1]
+        # memo: dof = N - 4 - colrank(covariates_df)
+        dof = residualizer.dof - 2
         interaction_t = torch.tensor(interaction_s.values.reshape(1,-1), dtype=torch.float32).to(device)
         if maf_threshold_interaction > 0:
             interaction_mask_t = torch.BoolTensor(interaction_s >= interaction_s.median()).to(device)
         else:
             interaction_mask_t = None
+    logger.write('  * dof = {}'.format(dof))
 
     igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, group_s=group_s, window=window)
     # iterate over chromosomes
@@ -174,7 +182,7 @@ def map_nominal(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covaria
 
                 variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
                 tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_tss[phenotype_id])
-
+ 
                 if interaction_s is None:
                     res = calculate_cis_nominal(genotypes_t, phenotype_t, residualizer)
                     tstat, slope, slope_se, maf, ma_samples, ma_count = [i.cpu().numpy() for i in res]
@@ -452,7 +460,11 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, covariates_
 
     genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
     genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
-    dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1]
+    # dof = phenotype_df.shape[1] - 2 - covariates_df.shape[1] 
+    # memo: dof = N - 2 - colrank(covariates_df)
+    dof = residualizer.dof
+    logger.write('  * dof = {}'.format(dof))
+
 
     # permutation indices
     n_samples = phenotype_df.shape[1]
@@ -603,9 +615,12 @@ def map_independent(genotype_df, variant_df, cis_df, phenotype_df, phenotype_pos
                 ig = genotype_df.values[ix_dict[variant_id], genotype_ix]
                 dosage_dict[variant_id] = ig
                 covariates = np.hstack([covariates, ig.reshape(-1,1)]).astype(np.float32)
-                dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
+                # dof = phenotype_df.shape[1] - 2 - covariates.shape[1]
                 covariates_t = torch.tensor(covariates, dtype=torch.float32).to(device)
                 residualizer = Residualizer(covariates_t)
+                # dof = phenotype_df.shape[1] - 2 -  covariates_df.shape[1] 
+                # memo: dof = N - 2 - colrank(covariates_df)
+                dof = residualizer.dof
                 del covariates_t
 
                 res = calculate_cis_permutations(genotypes_t, phenotype_t, permutation_ix_t, residualizer)

@@ -49,8 +49,18 @@ class SimpleLogger(object):
 class Residualizer(object):
     def __init__(self, C_t):
         # center and orthogonalize
-        self.Q_t, _ = torch.qr(C_t - C_t.mean(0))
-        self.dof = C_t.shape[0] - 2 - C_t.shape[1]
+        self.Q_t, R_ = torch.qr(C_t - C_t.mean(0))
+        
+        # here we take care of C_t with non full column rank
+        # we follow the same behavior of R::lm where the correlated covariates 
+        # will be discards (won't contribute to computation and dof)
+        # here we check and take care of this situation
+        # specifically, we set Q columns with no contribution to zeros
+        # and they won't be considered in dof calculation
+        # get a binary vector indicating if Q_t columns are used.
+        Q_t_usage = (R_ != 0).sum(axis=1) != 0  
+        self.Q_t[:, torch.logical_not(Q_t_usage)] = 0
+        self.dof = C_t.shape[0] - 2 - Q_t_usage.sum()
 
     def transform(self, M_t, center=True):
         """Residualize rows of M wrt columns of C"""
@@ -108,7 +118,7 @@ def center_normalize(M_t, dim=0):
 
 def calculate_corr(genotype_t, phenotype_t, residualizer=None, return_var=False):
     """Calculate correlation between normalized residual genotypes and phenotypes"""
-
+ 
     # residualize
     if residualizer is not None:
         genotype_res_t = residualizer.transform(genotype_t)  # variants x samples
