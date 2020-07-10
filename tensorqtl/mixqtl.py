@@ -199,9 +199,12 @@ def linreg_robust(X_t, y_t):
     
 
 ## added by Yanyu Liang
-def regress_out(cov, y):
+def get_offset(cov, y):
     b_t, b_se_t = linreg_robust(cov, y)
-    y_ = y - torch.einsum('ij,j->i', cov, b_t)
+    return torch.einsum('ij,j->i', cov, b_t)
+
+def regress_out(cov, y):
+    y_ = y - get_offset(cov, y)
     return y_
 def _inner(A, B, M):
     S = torch.mul(A, B)
