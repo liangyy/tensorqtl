@@ -69,13 +69,13 @@ def finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates
         cov_offset[M_cov == True] = mixqtl.get_offset(covariates_t[mask_cov, :], log_counts_t[mask_cov])
     
     if mode == 'mixfine':
-        o = {'geno1': hap1_t, 'geno2': hap2_t,
-                             'y1': ref_t, 'y2': alt_t,
-                             'ytotal': raw_counts_t,
-                             'lib_size': libsize_t, 'cov_offset': cov_offset }
-        import pickle 
-        with open('test.pkl', 'wb') as f:
-            pickle.dump(o, f)
+        # o = {'geno1': hap1_t, 'geno2': hap2_t,
+        #                      'y1': ref_t, 'y2': alt_t,
+        #                      'ytotal': raw_counts_t,
+        #                      'lib_size': libsize_t, 'cov_offset': cov_offset }
+        # import pickle 
+        # with open('test.pkl', 'wb') as f:
+        #     pickle.dump(o, f)
         res = r_mixqtl.mixfine(geno1=hap1_t.T.numpy(), geno2=hap2_t.T.numpy(), 
                              y1=ref_t.numpy(), y2=alt_t.numpy(), 
                              ytotal=raw_counts_t.numpy(), 
@@ -132,7 +132,9 @@ def unpack_cs(df_cs):
         for k in var_str:
             row['variable'] = int(k)
             base.update(row)
-    return base.to_df()
+    tmp = base.to_df()
+    tmp['cs'] = tmp['cs'].astype(int)
+    return tmp
 
 def rdf2pd(rdf):
     if r_base.is_null(rdf)[0] is True:
@@ -155,7 +157,9 @@ def run_mixfine(hap1_df, hap2_df, variant_df, libsize_df, counts_df, ref_df, alt
 
     Fine-mapping variant-level PIPs and 95% credible set results 
     for each chromosome are written to parquet files
-    in the format <output_dir>/<prefix>.finemap.mixFine.<chr>.parquet
+    in the format 
+    <output_dir>/<prefix>.finemap_pip.<mode>.<chr>.parquet
+    <output_dir>/<prefix>.finemap_cs.<mode>.<chr>.parquet
     """
     assert np.all(counts_df.index==phenotype_pos_df.index)
     assert np.all(counts_df.columns==covariates_df.index)
@@ -195,25 +199,15 @@ def run_mixfine(hap1_df, hap2_df, variant_df, libsize_df, counts_df, ref_df, alt
             j = igm.cis_ranges[i]
             n += j[1] - j[0] + 1
 
-        chr_res = OrderedDict()
-        chr_res['phenotype_id'] =   []
-        chr_res['variant_id'] =     []
-        chr_res['tss_distance'] =   np.empty(n, dtype=np.int32)
-        chr_res['maf'] =            np.empty(n, dtype=np.float32)
-        chr_res['variable_prob'] =  np.empty(n, dtype=np.float32)
-        chr_res['credible_set'] =   np.empty(n, dtype=np.int32)
+        chr_res = []
+        chr_res_cols = ['phenotype_id', 'variant_id', 'tss_distance', 'variable_prob', 'cs']
         
-        chr_res_cs = OrderedDict()
-        chr_res['phenotype_id'] = []
-        chr_res['variable'] =     []
-        chr_res['credible_set'] = np.empty(n, dtype=np.int32)
-        chr_res['cs_log10bf'] =   np.empty(n, dtype=np.float32)
-        chr_res['cs_avg_r2'] =    np.empty(n, dtype=np.float32)
-        chr_res['cs_min_r2'] =    np.empty(n, dtype=np.float32)
+        chr_res_cs = []
+        chr_res_cs_cols = ['phenotype_id', 'variant_id', 'cs', 'cs_log10bf', 'cs_avg_r2', 'cs_min_r2', 'variable_prob']
 
         start = 0
         for k, (raw_counts, _, ref, alt, hap1, hap2, genotype_range, phenotype_id) in enumerate(igm.generate_data(chrom=chrom, verbose=verbose), k+1):
-            print(phenotype_id)
+            
             # copy data to GPU
             hap1_t = torch.tensor(hap1, dtype=torch.float).to(device)
             hap2_t = torch.tensor(hap2, dtype=torch.float).to(device)
@@ -234,66 +228,29 @@ def run_mixfine(hap1_df, hap2_df, variant_df, libsize_df, counts_df, ref_df, alt
                                      count_threshold=count_threshold, select_covariates=True, 
                                      ase_threshold=ase_threshold, ase_max=ase_max, weight_cap=weight_cap, 
                                      mode=mode)
-            breakpoint() 
-            n = len(variant_ids)
-            [tstat_trc, beta_trc, beta_se_trc, maf_trc, ma_samples_trc, ma_count_trc] = res_trc
+            
+            res['phenotype_id'] = phenotype_id
+            res['variant_id'] = variant_ids
+            res['tss_distance'] = tss_distance
+            res_append = res[chr_res_cols]
+            chr_res.append(res_append.copy())
+            
+            res_cs['phenotype_id'] = phenotype_id
+            res_cs['variant_id'] = variant_ids[res_cs.variable_idx]
+            res_cs_append = res_cs[chr_res_cs_cols]
+            chr_res_cs.append(res_cs_append.copy())
 
-            chr_res['phenotype_id'].extend([phenotype_id]*n)
-            chr_res['variant_id'].extend(variant_ids)
-            chr_res['tss_distance'][start:start+n] = tss_distance
-            chr_res['maf_trc'][start:start+n] = maf_trc.cpu().numpy()
-            chr_res['ma_samples_trc'][start:start+n] = ma_samples_trc.cpu().numpy()
-            chr_res['ma_count_trc'][start:start+n] = ma_count_trc.cpu().numpy()
-            chr_res['beta_trc'][start:start+n] = beta_trc.cpu().numpy()
-            chr_res['beta_se_trc'][start:start+n] = beta_se_trc.cpu().numpy()
-            chr_res['tstat_trc'][start:start+n] = tstat_trc.cpu().numpy()
-            chr_res['samples_trc'][start:start+n] = samples_trc
-            chr_res['dof_trc'][start:start+n] = dof_trc.cpu().numpy()
-
-            if res_asc is not None:
-                [tstat_asc, beta_asc, beta_se_asc] = res_asc
-                chr_res['beta_asc'][start:start+n] = beta_asc.cpu().numpy()
-                chr_res['beta_se_asc'][start:start+n] = beta_se_asc.cpu().numpy()
-                chr_res['tstat_asc'][start:start+n] = tstat_asc.cpu().numpy()
-                chr_res['samples_asc'][start:start+n] = samples_asc.cpu().numpy()
-                chr_res['dof_asc'][start:start+n] = dof_asc.cpu().numpy()
-            # meta-analysis
-            if res_asc is not None and samples_asc >= 15 and samples_trc >= 15:
-                chr_res['method_meta'].extend(['meta']*n)
-                d = 1/beta_se_trc**2 + 1/beta_se_asc**2
-                beta_meta_t = (beta_asc/beta_se_asc**2 + beta_trc/beta_se_trc**2) / d
-                beta_se_meta_t = 1 / torch.sqrt(d)
-                tstat_meta_t = beta_meta_t / beta_se_meta_t
-                chr_res['beta_meta'][start:start+n] = beta_meta_t.cpu().numpy()
-                chr_res['beta_se_meta'][start:start+n] = beta_se_meta_t.cpu().numpy()
-                chr_res['tstat_meta'][start:start+n] = tstat_meta_t.cpu().numpy()
-            else:
-                chr_res['method_meta'].extend(['trc']*n)
-                chr_res['beta_meta'][start:start+n] = beta_trc.cpu().numpy()
-                chr_res['beta_se_meta'][start:start+n] = beta_se_trc.cpu().numpy()
-                chr_res['tstat_meta'][start:start+n] = tstat_trc.cpu().numpy()
-
-            start += n  # update pointer
 
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
         # convert to dataframe, compute p-values and write current chromosome
-        if start < len(chr_res['maf_trc']):
-            for x in chr_res:
-                chr_res[x] = chr_res[x][:start]
+        df_res = pd.concat(chr_res, axis=0)
+        df_res_cs = pd.concat(chr_res_cs, axis=0)
 
-        if write_stats:
-            chr_res_df = pd.DataFrame(chr_res)
-            # torch.distributions.StudentT.cdf is still not implemented --> use scipy
-            # m = chr_res_df['pval_nominal'].notnull()
-            # chr_res_df.loc[m, 'pval_nominal'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_nominal'].abs(), dof)
-            chr_res_df['pval_trc'] = 2*stats.t.cdf(-chr_res_df['tstat_trc'].abs(), chr_res_df['dof_trc'])
-            chr_res_df['pval_asc'] = 2*stats.t.cdf(-chr_res_df['tstat_asc'].abs(), chr_res_df['dof_asc'])
-            chr_res_df['pval_meta'] = 2*stats.norm.cdf(-chr_res_df['tstat_meta'].abs())
-            chr_res_df['pval_meta'][chr_res_df['method_meta'] == 'trc'] = chr_res_df['pval_trc'][chr_res_df['method_meta'] == 'trc'] 
  
 
-            print('    * writing output')
-            chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.mixQTL.{}.parquet'.format(prefix, chrom)))
+        print('    * writing output')
+        df_res.to_parquet(os.path.join(output_dir, '{}.finemap_pip.{}.{}.parquet'.format(prefix, mode, chrom)))
+        df_res_cs.to_parquet(os.path.join(output_dir, '{}.finemap_cs.{}.{}.parquet'.format(prefix, mode, chrom)))
 
     logger.write('done.')
