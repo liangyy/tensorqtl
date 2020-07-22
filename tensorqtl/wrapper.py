@@ -1,13 +1,16 @@
 import torch
 import numpy as np
 import pandas as pd
-import time
+import time, os
 
+from collections import OrderedDict
 import pdb
 
 import genotypeio
 from core import SimpleLogger, impute_mean, filter_maf
 
+def name_to_index(mylist, name):
+    return np.where(np.array(mylist) == name)[0][0]
 
 def map_trans(genotype_df, phenotype_df, covariates_df, mapper, pval_threshold=1e-5, 
               maf_threshold=0.05, batch_size=20000,
@@ -107,8 +110,6 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
 
     if logger is None:
         logger = SimpleLogger()
-    if group_s is not None:
-        group_dict = group_s.to_dict()
 
     logger.write('cis-QTL mapping')
     logger.write('  * {} samples'.format(phenotype_df.shape[1]))
@@ -124,13 +125,11 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
     # So, for now, as it is not taken care of inside the caller, 
     # we need to make sure that these phenotypes are not part of the input.
     ## mapper call
-    mapper.init(phenotypes_t, covariates_t, **kwargs)
+    mapper.init(phenotypes_t.T, covariates_t, **kwargs)
     phenotype_names = phenotype_df.index.to_list()
 
-    genotype_ix = np.array([genotype_df.columns.tolist().index(i) for i in phenotype_df.columns])
-    genotype_ix_t = torch.from_numpy(genotype_ix).to(device)
     
-    igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, group_s=group_s, window=window)
+    igc = genotypeio.InputGeneratorCis(genotype_df, variant_df, phenotype_df, phenotype_pos_df, group_s=None, window=window)
     # iterate over chromosomes
     best_assoc = []
     start_time = time.time()
@@ -148,7 +147,6 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
         chr_res['phenotype_id'] = []
         chr_res['variant_id'] = []
         chr_res['tss_distance'] = np.empty(n, dtype=np.int32)
-        chr_res['maf'] =          np.empty(n, dtype=np.float32)
         chr_res['pval'] = np.empty(n, dtype=np.float64)
         chr_res['b'] =        np.empty(n, dtype=np.float32)
         
@@ -157,7 +155,6 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
         for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(chrom=chrom, verbose=verbose), k+1):
             # copy genotypes to GPU
             genotypes_t = torch.tensor(genotypes, dtype=torch.float).to(device)
-            genotypes_t = genotypes_t[:,genotype_ix_t]
             impute_mean(genotypes_t)
 
             variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
@@ -166,7 +163,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
             phenotype_idx = name_to_index(phenotype_names, phenotype_id)
 
             ## mapper call
-            res_i = mapper.map_one(genotypes_t, phenotype_idx)
+            res_i = mapper.map_one(genotypes_t.T, phenotype_idx)
             
             n = len(variant_ids)
             
@@ -175,8 +172,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
                 chr_res['phenotype_id'].extend([phenotype_id]*n)
                 chr_res['variant_id'].extend(variant_ids)
                 chr_res['tss_distance'][start:start+n] = tss_distance
-                chr_res['maf'][start:start+n] = maf
-                chr_res['pval'][start:start+n] = res_i[0]
+                chr_res['pval'][start:start+n] = res_i[1]
                 chr_res['b'][start:start+n] = res_i[0]
                 
             start += n  # update pointer
@@ -185,7 +181,7 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
 
         # prepare output
-        if start < len(chr_res['maf']):
+        if start < len(chr_res['tss_distance']):
             for x in chr_res:
                 chr_res[x] = chr_res[x][:start]
 
