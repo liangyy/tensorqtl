@@ -95,12 +95,15 @@ def map_trans(genotype_df, phenotype_df, covariates_df, mapper, pval_threshold=1
 def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
             covariates_df, mapper, prefix, 
             window=1000000, output_dir='.', 
-            logger=None, verbose=True, kwargs={}):
+            logger=None, verbose=True, interaction=False, kwargs={}):
     '''
     Wrapper for cis-QTL mapping.
     The QTL caller is `mapper` which should have 
     * mapper.init(phenotype, covariate)
     * mapper.map(genotype) 
+    If interaction: 
+    * mapper.map_one_multi_x(X) with X being generated from 
+    kwargs['transform_fun'](kwargs['design_matrix'] @ genotype, **kwargs['transform_fun_args'])
     implemented.
     mapper.map_one should return 'bhat', 'pval' in a dictionary.
     '''
@@ -163,7 +166,11 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
             phenotype_idx = name_to_index(phenotype_names, phenotype_id)
 
             ## mapper call
-            res_i = mapper.map_one(genotypes_t.T, phenotype_idx)
+            if interaction is False:
+                res_i = mapper.map_one(genotypes_t.T, phenotype_idx)
+            elif interaction is True:
+                X = kwargs['transform_fun'](kwargs['design_matrix'] @ genotypes_t.T, **kwargs['transform_fun_args'])
+                res_i = mapper.map_one_multi_x(X, phenotype_idx)
             
             n = len(variant_ids)
             
