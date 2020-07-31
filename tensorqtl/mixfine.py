@@ -43,7 +43,7 @@ def finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates
     """
     
     if mode == 'nefine':
-        log_counts_t = raw_counts_t.copy()
+        log_counts_t = raw_counts_t.clone()
         raw_counts_t[:] = count_threshold + 1
     elif mode == 'mixfine' or mode == 'trcfine':
         log_counts_t = torch.log(raw_counts_t / libsize_t / 2).type(torch.float)
@@ -62,8 +62,8 @@ def finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates
 
     M = torch.unsqueeze(mask_t, 1).float()
     M_cov = torch.unsqueeze(mask_cov, 1).float()
-    cov_offset = log_counts_t.reshape(1,-1).T
-    cov_offset[M_cov == False] = 0
+    cov_offset = log_counts_t.reshape(1,-1).T.clone()
+    cov_offset[:] = 0
     
     if covariates_t.shape[1] != 0:
         cov_offset[M_cov == True] = mixqtl.get_offset(covariates_t[mask_cov, :], log_counts_t[mask_cov])
@@ -83,16 +83,32 @@ def finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates
                              trc_cutoff=count_threshold, asc_cutoff=ase_threshold, 
                              asc_cap=ase_max, weight_cap=weight_cap, nobs_asc_cutoff=3)
     elif mode == 'nefine':
-        res = mixqtl.run_susie_default(x=hap1_t.numpy() + hap2_t.numpy(), y = log_counts_t.numpy() - cov_offset.numpy())
+        # o = {'geno': hap1_t.T.numpy() + hap2_t.T.numpy(),
+        #                      'y': log_counts_t.numpy(),
+        #                      'cov_offset': cov_offset[:, 0].numpy() }
+        # import pickle
+        # with open('test.pkl', 'wb') as f:
+        #     pickle.dump(o, f)
+        # breakpoint()
+        res = r_mixqtl.run_susie_default(x=hap1_t.T.numpy() + hap2_t.T.numpy(), y = log_counts_t.numpy() - cov_offset[:, 0].numpy())
     elif mode == 'trcfine':
         cov_offset_ = cov_offset[M, 0]
         log_counts_t_ = log_counts_t[M]
-        hap1_t_ = hap1_t[M, :]
-        hap2_t_ = hap2_t[M, :]
-        res = mixqtl.run_susie_default(x=hap1_t_.numpy() + hap2_t_.numpy(), y = log_counts_t_.numpy() - cov_offset_.numpy())
-    with localconverter(ro.default_converter + pandas2ri.converter):
-        df_vars = rdf2pd(r_base.summary(res).rx2('vars'))
-        df_cs = rdf2pd(r_base.summary(res).rx2('cs'))
+        hap1_t_ = hap1_t[:, M]
+        hap2_t_ = hap2_t[:, M]
+        res = r_mixqtl.run_susie_default(x=hap1_t_.T.numpy() + hap2_t_.T.numpy(), y = log_counts_t_.numpy() - cov_offset_[:, 0].numpy())
+    if 'cs' in r_base.names(res):
+        with localconverter(ro.default_converter + pandas2ri.converter):
+            df_cs = res.rx2('cs')
+            df_vars = res.rx2('vars')
+    else:    
+        with localconverter(ro.default_converter + pandas2ri.converter):
+            df_vars = ro.conversion.rpy2py(r_base.summary(res).rx2('vars'))
+            df_cs = ro.conversion.rpy2py(r_base.summary(res).rx2('cs'))
+    
+    df_vars = post_check(df_vars)
+    df_cs = post_check(df_cs) 
+    # print(df_cs.head())
 
     # re-order df_vars rows by position rather than significance
     df_ref = pd.DataFrame({'variable': [ i + 1 for i in range(hap1_t.shape[0]) ]})
@@ -101,10 +117,11 @@ def finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates
     df_vars = df_vars.drop(columns='variable')
     
     # unpack df_cs
-    df_cs = unpack_cs(df_cs)
-    df_cs['variable_idx'] = df_cs['variable'] - 1
-    df_cs = df_cs.drop(columns='variable')
-    df_cs = pd.merge(df_cs, df_vars[['variable_idx', 'variable_prob']], on='variable_idx')
+    if df_cs.shape[0] > 0:
+        df_cs = unpack_cs(df_cs)
+        df_cs['variable_idx'] = df_cs['variable'] - 1
+        df_cs = df_cs.drop(columns='variable')
+        df_cs = pd.merge(df_cs, df_vars[['variable_idx', 'variable_prob']], on='variable_idx')
 
     return df_vars, df_cs
 
@@ -136,13 +153,11 @@ def unpack_cs(df_cs):
     tmp['cs'] = tmp['cs'].astype(int)
     return tmp
 
-def rdf2pd(rdf):
-    if r_base.is_null(rdf)[0] is True:
-        return pd.DataFrame({})
+def post_check(rdf):
+    if isinstance(rdf, pd.DataFrame):
+        return rdf
     else:
-        with localconverter(ro.default_converter + pandas2ri.converter):
-            pddf = ro.conversion.rpy2py(rdf)
-        return pddf
+        return pd.DataFrame({})
 
 def run_mixfine(hap1_df, hap2_df, variant_df, libsize_df, counts_df, ref_df, alt_df,
                 phenotype_pos_df, covariates_df, prefix,
@@ -235,10 +250,11 @@ def run_mixfine(hap1_df, hap2_df, variant_df, libsize_df, counts_df, ref_df, alt
             res_append = res[chr_res_cols]
             chr_res.append(res_append.copy())
             
-            res_cs['phenotype_id'] = phenotype_id
-            res_cs['variant_id'] = variant_ids[res_cs.variable_idx]
-            res_cs_append = res_cs[chr_res_cs_cols]
-            chr_res_cs.append(res_cs_append.copy())
+            if res_cs.shape[0] > 0:
+                res_cs['phenotype_id'] = phenotype_id
+                res_cs['variant_id'] = variant_ids[res_cs.variable_idx]
+                res_cs = res_cs[chr_res_cs_cols]
+            chr_res_cs.append(res_cs.copy())
 
 
         logger.write('    time elapsed: {:.2f} min'.format((time.time()-start_time)/60))
