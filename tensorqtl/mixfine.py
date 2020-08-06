@@ -16,6 +16,10 @@ import mixqtl
 
 from rpy2.robjects.packages import importr
 r_mixqtl = importr('mixqtl')
+try:
+    r_aim = importr('finemapAim')
+except:
+    print('Warning: cannot load finemapAim')
 r_base = importr('base')
 from rpy2.robjects import numpy2ri
 numpy2ri.activate()
@@ -26,7 +30,7 @@ from rpy2.robjects.conversion import localconverter
 def finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates0_t, 
                count_threshold=100, select_covariates=True, 
                ase_threshold=50, ase_max=1000, weight_cap=100, 
-               mode='mixfine'):
+               mode='mixfine', extra_args={}):
     
     """
     Inputs:
@@ -97,6 +101,10 @@ def finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates
         hap1_t_ = hap1_t[:, M]
         hap2_t_ = hap2_t[:, M]
         res = r_mixqtl.run_susie_default(x=hap1_t_.T.numpy() + hap2_t_.T.numpy(), y = log_counts_t_.numpy() - cov_offset_[:, 0].numpy())
+    elif mode == 'aimfine':
+        eqtl = extra_args['eqtl'].numpy()
+        res = r_aim.finemapAim(eqtl, geno1=hap1_t.T.numpy(), geno2=hap2_t.T.numpy(), y1=ref_t.numpy(), y2=alt_t.numpy(), extra_args['aim_path'], extra_args['temp_prefix'])
+        
     if 'cs' in r_base.names(res):
         with localconverter(ro.default_converter + pandas2ri.converter):
             df_cs = res.rx2('cs')
@@ -163,7 +171,8 @@ def run_mixfine(hap1_df, hap2_df, variant_df, libsize_df, counts_df, ref_df, alt
                 phenotype_pos_df, covariates_df, prefix,
                 mode='mixfine',window=1000000, output_dir='.', 
                 write_stats=True, logger=None, verbose=True,
-                count_threshold=100, ase_threshold=50, ase_max=1000, weight_cap=100):
+                count_threshold=100, ase_threshold=50, ase_max=1000, weight_cap=100,
+                extra_args={}):
     """
     Fine-mapping mixFine based on mixQTL model proposed in 
     https://www.biorxiv.org/content/10.1101/2020.04.22.050666v1
@@ -239,10 +248,19 @@ def run_mixfine(hap1_df, hap2_df, variant_df, libsize_df, counts_df, ref_df, alt
             variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
             tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igm.phenotype_tss[phenotype_id])
             
+            if mode == 'aimfine':
+                eqtl = extra_args['eqtl'][ extra_args['eqtl'].phenotype_id == phenotype_id ]
+                eqtl = pd.merge(pd.DataFrame('variant_id': variant_ids), eqtl, on='variant_id', how=left)
+                eqtl = eqtl.zscore.fillna(0).values
+                extra_args_i = {
+                    'eqtl': eqtl,
+                    'aim_path': extra_args['aim_path'],
+                    'temp_prefix': extra_args['temp_prefix'] + f'_{phenotype_id}'
+                }
             res, res_cs = finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates0_t, 
                                      count_threshold=count_threshold, select_covariates=True, 
                                      ase_threshold=ase_threshold, ase_max=ase_max, weight_cap=weight_cap, 
-                                     mode=mode)
+                                     mode=mode, extra_args=extra_args_i)
             
             res['phenotype_id'] = phenotype_id
             res['variant_id'] = variant_ids
