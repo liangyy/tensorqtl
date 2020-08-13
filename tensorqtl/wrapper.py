@@ -9,6 +9,84 @@ import pdb
 import genotypeio
 from core import SimpleLogger, impute_mean, filter_maf
 
+
+class Permutor:
+    
+    '''
+    To support permutation in wrapper.
+    '''
+    
+    def __init__(self, nperm, chunk_size=10):
+        self.nperm = nperm
+        self.chunk_size
+        # pre compute chunk start and end
+        nchunk = self.nperm // self.chunk_size
+        if nchunk * self.chunk_size < self.nperm:
+            nchunk += 1
+        self.ranges = []
+        for i in range(nchunk):
+            start = i * nchunk
+            end = min((i + 1) * nchunk, self.nperm)
+            self.ranges.append((start, end))
+    
+    def gen_permuted_columns(self, X):
+        '''
+        Chunk size = self.chunk_size.
+        Yield permuted columns of X.
+        For X (n x p), return permuted X (n x (p x chunk_size))
+        Each chunk is size p, and by different chunks it is different permutations.
+        Within chunk, the row permutation is the same across all columns.
+        Yield self.nperm chunks in total.
+        '''
+        for s, e in self.ranges:
+            nchunk_to_make = e - s
+            x_collector = []
+            for i in range(nchunk_to_make):
+                x_collector.append(self.permute(X))
+            x_collector = torch.cat(x_collector, axis=1)
+            yield x_collector, nchunk_to_make
+    
+    def gen_permuted_columns_interaction(self, X, permute_func, permute_args):
+        '''
+        Chunk size = self.chunk_size.
+        Yield permuted data defined by permute_func and permute_args.
+        For X (n x p), return permuted X (n x (p x chunk_size) x *).
+        Note that the dimension may expend depending on how permute happends.
+        Each chunk is size p, and by different chunks it is different permutations.
+        Within chunk, the row permutation is the same across all columns.
+        Yield self.nperm chunks in total.
+        '''
+        for s, e in self.ranges:
+            nchunk_to_make = e - s
+            x_collector = []
+            for i in range(nchunk_to_make):
+                x_collector.append(permute_func(X, **permute_args))
+            x_collector = torch.cat(x_collector, axis=1)
+            yield x_collector, nchunk_to_make
+    
+    @staticmethod
+    def permute(X):
+         return X[torch.randperm(X.shape[0])]
+    
+    @staticmethod
+    def rearrange(flat_mat, nchunk):
+        '''
+        reshape flat mat (p x nchunk) to 
+        a mat with shape nchunk x p
+        '''
+        pc = flat_mat.shape[0]
+        p = int(pc / nchunk)
+        return flat_mat.reshape((nchunk, p))
+    
+    def add_permutation_pval(pval_obs, pval_perm):
+        tmp = torch.cat(
+            (pval_obs.unsqueeze(0), pval_perm),
+            axis=0
+        )
+        obs_rank = tmp.argsort(axis=0)[0, :]
+        return obs_rank / pval_perm.shape[0]
+        
+
 def name_to_index(mylist, name):
     return np.where(np.array(mylist) == name)[0][0]
 
@@ -95,7 +173,8 @@ def map_trans(genotype_df, phenotype_df, covariates_df, mapper, pval_threshold=1
 def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
             covariates_df, mapper, prefix, 
             window=1000000, output_dir='.', 
-            logger=None, verbose=True, interaction=False, kwargs={}, kwargs_interaction={}):
+            logger=None, verbose=True, interaction=False, kwargs={}, kwargs_interaction={},
+            num_of_permutation=None, permutation_chunk_size=10):
     '''
     Wrapper for cis-QTL mapping.
     The QTL caller is `mapper` which should have 
@@ -153,6 +232,9 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
         chr_res['pval'] = np.empty(n, dtype=np.float64)
         chr_res['b'] =        np.empty(n, dtype=np.float32)
         
+        if num_of_permutation is not None:
+            chr_res['pval_permutation'] = np.empty(n, dtype=np.float64)
+        
         start = 0
         
         for k, (phenotype, genotypes, genotype_range, phenotype_id) in enumerate(igc.generate_data(chrom=chrom, verbose=verbose), k+1):
@@ -161,6 +243,11 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
             impute_mean(genotypes_t)
 
             variant_ids = variant_df.index[genotype_range[0]:genotype_range[-1]+1]
+            
+            n = len(variant_ids)
+            if n <= 0:
+                continue
+            
             tss_distance = np.int32(variant_df['pos'].values[genotype_range[0]:genotype_range[-1]+1] - igc.phenotype_tss[phenotype_id])
             
             phenotype_idx = name_to_index(phenotype_names, phenotype_id)
@@ -172,16 +259,34 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
                 X = kwargs_interaction['transform_fun'](torch.Tensor(kwargs['design_matrix']) @ genotypes_t.T, **kwargs_interaction['transform_fun_args'])
                 res_i = mapper.map_one_multi_x(X, phenotype_idx)
             
-            n = len(variant_ids)
-            
-
-            if n > 0:
-                chr_res['phenotype_id'].extend([phenotype_id]*n)
-                chr_res['variant_id'].extend(variant_ids)
-                chr_res['tss_distance'][start:start+n] = tss_distance
-                chr_res['pval'][start:start+n] = res_i[1]
-                chr_res['b'][start:start+n] = res_i[0]
                 
+            ## take care of permutation
+            if num_of_permutation is not None:
+                list_pval_perm = []
+                permutor = Permutor(num_of_permutation, chunk_size=permutation_chunk_size)
+                if interaction is False:
+                    for x, nchunk in permutor.gen_permuted_columns(genotypes_t.T):
+                        _, pval_perm = mapper.map_one(x, phenotype_idx)
+                        list_pval_perm.append(permutor.rearrange(pval_perm, nchunk)
+                elif interaction is True:
+                    for x, nchunk in permutor.gen_permuted_columns_interaction(
+                        torch.Tensor(kwargs['design_matrix']) @ genotypes_t.T,
+                        kwargs_interaction['permutation']['transform_fun'],
+                        kwargs_interaction['permutation']['transform_fun_args']
+                    ):
+                        _, pval_perm = mapper.map_one_multi_x(x, phenotype_idx)
+                        list_pval_perm.append(permutor.rearrange(pval_perm, nchunk)
+                else:
+                    raise ValueError(f'The args interaction can only be True or False. Wrong interaction = {interaction}.')
+                pval_from_permutation = permutor.add_permutation_pval(res_i[0], torch.cat(list_pval_perm, axis=2))
+        
+            chr_res['phenotype_id'].extend([phenotype_id]*n)
+            chr_res['variant_id'].extend(variant_ids)
+            chr_res['tss_distance'][start:start+n] = tss_distance
+            chr_res['pval'][start:start+n] = res_i[1]
+            chr_res['b'][start:start+n] = res_i[0]
+            if num_of_permutation is not None:
+                chr_res['pval_permutation'][start:start+n] = pval_from_permutation
             start += n  # update pointer
         
 
