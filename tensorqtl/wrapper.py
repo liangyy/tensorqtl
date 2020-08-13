@@ -18,15 +18,15 @@ class Permutor:
     
     def __init__(self, nperm, chunk_size=10):
         self.nperm = nperm
-        self.chunk_size
+        self.chunk_size = chunk_size
         # pre compute chunk start and end
         nchunk = self.nperm // self.chunk_size
         if nchunk * self.chunk_size < self.nperm:
             nchunk += 1
         self.ranges = []
         for i in range(nchunk):
-            start = i * nchunk
-            end = min((i + 1) * nchunk, self.nperm)
+            start = i * self.chunk_size
+            end = min((i + 1) * self.chunk_size, self.nperm)
             self.ranges.append((start, end))
     
     def gen_permuted_columns(self, X):
@@ -78,13 +78,14 @@ class Permutor:
         p = int(pc / nchunk)
         return flat_mat.reshape((nchunk, p))
     
+    @staticmethod 
     def add_permutation_pval(pval_obs, pval_perm):
         tmp = torch.cat(
             (pval_obs.unsqueeze(0), pval_perm),
             axis=0
         )
         obs_rank = tmp.argsort(axis=0)[0, :]
-        return obs_rank / pval_perm.shape[0]
+        return obs_rank / float(pval_perm.shape[0])
         
 
 def name_to_index(mylist, name):
@@ -267,18 +268,19 @@ def map_cis(genotype_df, variant_df, phenotype_df, phenotype_pos_df,
                 if interaction is False:
                     for x, nchunk in permutor.gen_permuted_columns(genotypes_t.T):
                         _, pval_perm = mapper.map_one(x, phenotype_idx)
-                        list_pval_perm.append(permutor.rearrange(pval_perm, nchunk)
+                        list_pval_perm.append(permutor.rearrange(torch.Tensor(pval_perm), nchunk))
                 elif interaction is True:
-                    for x, nchunk in permutor.gen_permuted_columns_interaction(
+                    traveler = permutor.gen_permuted_columns_interaction(
                         torch.Tensor(kwargs['design_matrix']) @ genotypes_t.T,
                         kwargs_interaction['permutation']['transform_fun'],
                         kwargs_interaction['permutation']['transform_fun_args']
-                    ):
+                    )
+                    for x, nchunk in traveler: 
                         _, pval_perm = mapper.map_one_multi_x(x, phenotype_idx)
-                        list_pval_perm.append(permutor.rearrange(pval_perm, nchunk)
+                        list_pval_perm.append(permutor.rearrange(torch.Tensor(pval_perm), nchunk))
                 else:
                     raise ValueError(f'The args interaction can only be True or False. Wrong interaction = {interaction}.')
-                pval_from_permutation = permutor.add_permutation_pval(res_i[0], torch.cat(list_pval_perm, axis=2))
+                pval_from_permutation = permutor.add_permutation_pval(torch.Tensor(res_i[1]), torch.cat(list_pval_perm, axis=0))
         
             chr_res['phenotype_id'].extend([phenotype_id]*n)
             chr_res['variant_id'].extend(variant_ids)
