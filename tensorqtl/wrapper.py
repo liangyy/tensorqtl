@@ -78,16 +78,14 @@ class Permutor:
         p = int(pc / nchunk)
         return flat_mat.reshape((nchunk, p))
     
-    @staticmethod 
+    @staticmethod
     def add_permutation_pval(pval_obs, pval_perm):
-        tmp = torch.cat(
-            (pval_obs.unsqueeze(0), pval_perm),
-            axis=0
-        )
-        obs_rank = tmp.argsort(axis=0)[0, :]
+        out = []
+        for i in range(pval_obs.shape[0]):
+            out.append((pval_obs[i] >= pval_perm[:, i]).sum())
+        obs_rank = torch.Tensor(out)
         return obs_rank / float(pval_perm.shape[0])
-        
-
+    
 def name_to_index(mylist, name):
     return np.where(np.array(mylist) == name)[0][0]
 
