@@ -49,7 +49,7 @@ def finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates
     if mode == 'nefine':
         log_counts_t = raw_counts_t.clone()
         raw_counts_t[:] = count_threshold + 1
-    elif mode == 'mixfine' or mode == 'trcfine':
+    elif mode == 'mixfine' or mode == 'trcfine' or mode == 'aimfine':
         log_counts_t = torch.log(raw_counts_t / libsize_t / 2).type(torch.float)
         # breakpoint() 
     mask_t = raw_counts_t >= count_threshold
@@ -85,7 +85,7 @@ def finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates
                              ytotal=raw_counts_t.numpy(), 
                              lib_size=libsize_t.numpy(), cov_offset=cov_offset[:, 0].numpy(),
                              trc_cutoff=count_threshold, asc_cutoff=ase_threshold, 
-                             asc_cap=ase_max, weight_cap=weight_cap, nobs_asc_cutoff=3)
+                             asc_cap=ase_max, weight_cap=weight_cap, nobs_asc_cutoff=15)
     elif mode == 'nefine':
         # o = {'geno': hap1_t.T.numpy() + hap2_t.T.numpy(),
         #                      'y': log_counts_t.numpy(),
@@ -93,6 +93,7 @@ def finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates
         # import pickle
         # with open('test.pkl', 'wb') as f:
         #     pickle.dump(o, f)
+        # breakpoint()
         # breakpoint()
         res = r_mixqtl.run_susie_default(x=hap1_t.T.numpy() + hap2_t.T.numpy(), y = log_counts_t.numpy() - cov_offset[:, 0].numpy())
     elif mode == 'trcfine':
@@ -102,8 +103,8 @@ def finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates
         hap2_t_ = hap2_t[:, M]
         res = r_mixqtl.run_susie_default(x=hap1_t_.T.numpy() + hap2_t_.T.numpy(), y = log_counts_t_.numpy() - cov_offset_[:, 0].numpy())
     elif mode == 'aimfine':
-        eqtl = extra_args['eqtl'].numpy()
-        res = r_aim.finemapAim(eqtl, geno1=hap1_t.T.numpy(), geno2=hap2_t.T.numpy(), y1=ref_t.numpy(), y2=alt_t.numpy(), extra_args['aim_path'], extra_args['temp_prefix'])
+        eqtl = extra_args['eqtl']
+        res = r_aim.finemapAim(eqtl, geno1=hap1_t.T.numpy(), geno2=hap2_t.T.numpy(), y1=ref_t.numpy(), y2=alt_t.numpy(), path_to_aim=extra_args['aim_path'], temp_prefix=extra_args['temp_prefix'], temp_dir=extra_args['temp_dir'])
         
     if 'cs' in r_base.names(res):
         with localconverter(ro.default_converter + pandas2ri.converter):
@@ -250,13 +251,16 @@ def run_mixfine(hap1_df, hap2_df, variant_df, libsize_df, counts_df, ref_df, alt
             
             if mode == 'aimfine':
                 eqtl = extra_args['eqtl'][ extra_args['eqtl'].phenotype_id == phenotype_id ]
-                eqtl = pd.merge(pd.DataFrame('variant_id': variant_ids), eqtl, on='variant_id', how=left)
+                eqtl = pd.merge(pd.DataFrame({'variant_id': variant_ids}), eqtl, on='variant_id', how='left')
                 eqtl = eqtl.zscore.fillna(0).values
                 extra_args_i = {
                     'eqtl': eqtl,
                     'aim_path': extra_args['aim_path'],
-                    'temp_prefix': extra_args['temp_prefix'] + f'_{phenotype_id}'
+                    'temp_prefix': extra_args['temp_prefix'] + f'_{phenotype_id}',
+                    'temp_dir': extra_args['temp_dir']
                 }
+            else:
+                extra_args_i = {}
             res, res_cs = finemapper(hap1_t, hap2_t, ref_t, alt_t, raw_counts_t, libsize_t, covariates0_t, 
                                      count_threshold=count_threshold, select_covariates=True, 
                                      ase_threshold=ase_threshold, ase_max=ase_max, weight_cap=weight_cap, 
