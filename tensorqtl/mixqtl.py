@@ -8,6 +8,17 @@ import torch
 import tensorqtl
 from tensorqtl import genotypeio, cis, SimpleLogger
 
+def cleanup_pvalue(df):
+    pval = df[ 'pval_meta' ].values
+    bhat = df[ 'beta_meta' ].values
+    bhat[ np.isnan(pval) ] = df[ 'beta_trc' ].values[ np.isnan(pval) ]
+    pval[ np.isnan(pval) ] = df[ 'pval_trc' ].values[ np.isnan(pval) ]
+    bhat[ np.isnan(pval) ] = df[ 'beta_asc' ].values[ np.isnan(pval) ]
+    pval[ np.isnan(pval) ] = df[ 'pval_asc' ].values[ np.isnan(pval) ]
+    
+    df['pval'] = pval
+    df['bhat'] = bhat
+    return df
 
 class InputGeneratorMix(object):
     """
@@ -610,7 +621,7 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
             chr_res_df['pval_meta'] = 2*stats.norm.cdf(-chr_res_df['tstat_meta'].abs())
             chr_res_df['pval_meta'][chr_res_df['method_meta'] == 'trc'] = chr_res_df['pval_trc'][chr_res_df['method_meta'] == 'trc'] 
  
-
+            chr_res_df = cleanup_pvalue(chr_res_df)
             print('    * writing output')
             chr_res_df.to_parquet(os.path.join(output_dir, '{}.cis_qtl_pairs.mixQTL.{}.parquet'.format(prefix, chrom)))
 
