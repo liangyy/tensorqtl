@@ -11,13 +11,17 @@ from tensorqtl import genotypeio, cis, SimpleLogger
 def cleanup_pvalue(df):
     pval = df[ 'pval_meta' ].values
     bhat = df[ 'beta_meta' ].values
+    se = df[ 'beta_se_meta' ].values
     bhat[ np.isnan(pval) ] = df[ 'beta_trc' ].values[ np.isnan(pval) ]
+    se[ np.isnan(pval) ] = df[ 'beta_se_trc' ].values[ np.isnan(pval) ]
     pval[ np.isnan(pval) ] = df[ 'pval_trc' ].values[ np.isnan(pval) ]
     bhat[ np.isnan(pval) ] = df[ 'beta_asc' ].values[ np.isnan(pval) ]
+    se[ np.isnan(pval) ] = df[ 'beta_se_asc' ].values[ np.isnan(pval) ]
     pval[ np.isnan(pval) ] = df[ 'pval_asc' ].values[ np.isnan(pval) ]
     
     df['pval'] = pval
     df['bhat'] = bhat
+    df['bhat_se'] = bhat
     return df
 
 class InputGeneratorMix(object):
