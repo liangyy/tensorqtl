@@ -622,8 +622,10 @@ def map_nominal(hap1_df, hap2_df, variant_df, log_counts_imp_df, counts_df, ref_
             # chr_res_df.loc[m, 'pval_nominal'] = 2*stats.t.cdf(-chr_res_df.loc[m, 'pval_nominal'].abs(), dof)
             chr_res_df['pval_trc'] = 2*stats.t.cdf(-chr_res_df['tstat_trc'].abs(), chr_res_df['dof_trc'])
             chr_res_df['pval_asc'] = 2*stats.t.cdf(-chr_res_df['tstat_asc'].abs(), chr_res_df['dof_asc'])
-            chr_res_df['pval_meta'] = 2*stats.norm.cdf(-chr_res_df['tstat_meta'].abs())
-            chr_res_df['pval_meta'][chr_res_df['method_meta'] == 'trc'] = chr_res_df['pval_trc'][chr_res_df['method_meta'] == 'trc'] 
+            # chr_res_df['pval_meta'] = 2*stats.norm.cdf(-chr_res_df['tstat_meta'].abs())
+            tmp = 2*stats.norm.cdf(-chr_res_df['tstat_meta'].abs())
+            tmp[chr_res_df['method_meta'] == 'trc'] = chr_res_df['pval_trc'][chr_res_df['method_meta'] == 'trc'].copy()
+            chr_res_df['pval_meta'] = tmp 
  
             chr_res_df = cleanup_pvalue(chr_res_df)
             print('    * writing output')
